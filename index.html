@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phase 1.1 - TextArea and Cursor basics.</title>
+</head>
+
+<body>
+  <textarea id="editor_textarea" rows="10" cols="50">hello world</textarea>
+  <br>
+  <button id="move_cursor_to_button">Move cursor to position 5.</button>
+
+  <script>
+    const editor_textarea = document.getElementById("editor_textarea");
+    const move_cursor_to_button = document.getElementById("move_cursor_to_button");
+
+    editor_textarea.addEventListener("input", function (event) {
+      const selection_start_position = editor_textarea.selectionStart;
+      const selection_end_position = editor_textarea.selectionEnd;
+      const full_text_value = editor_textarea.value;
+
+      console.log("selectionStart:", selection_start_position);
+      console.log("selectionEnd:", selection_end_position);
+      console.log("value:", full_text_value);
+    });
+
+    // Use mousedown and preventDefault to keep textarea focused
+    move_cursor_to_button.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+
+      const target_position = 5;
+      editor_textarea.focus();
+      editor_textarea.setSelectionRange(target_position, target_position);
+    });
+  </script>
+</body>
+
+</html>
