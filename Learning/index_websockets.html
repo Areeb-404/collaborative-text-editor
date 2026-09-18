@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="device-width, initial-scale=1.0">
+        <title>Phase 1.2 - The Echo Chamber</title>
+    </head>
+    <body>
+        <input type="text" id="text_input" placeholder="Type a message....">
+        <script>
+            const text_input = document.getElementById("text_input");
+            const websocket_connection = new WebSocket("ws://localhost:8000/ws");
+
+            websocket_connection.onmessage = function(event){
+                const received_data = JSON.parse(event.data);
+                console.log("Server Echoed:",received_data);
+            };
+
+            text_input.addEventListener("input",function(event){
+                const current_input_value = text_input.value;
+                const payload_object = {
+                    text: current_input_value
+                };
+                if(websocket_connection.readyState==WebSocket.OPEN){
+                    websocket_connection.send(JSON.stringify(payload_object));
+                }
+            });
+        </script>
+    </body>
+</html>
