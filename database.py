@@ -59,4 +59,20 @@ async def get_document(doc_id: int) -> Optional[Dict[str,Any]]:
         """,doc_id)
         return dict(row) if row else None
 
+async def update_document(doc_id: int, content: str) -> Optional[Dict[str,Any]]:
+    """Updates document content in postgreSQL by id"""
+    if pool is None:
+        raise RuntimeError("Database connection pool is not initialised")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE documents
+            SET content = $1
+            WHERE id = $2
+            RETURNING id, title, content, created_at;
+            """,
+        content,doc_id)
+    return dict(row) if row else None
+
 

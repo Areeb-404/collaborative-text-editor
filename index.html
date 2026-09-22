@@ -3,28 +3,66 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="device-width, initial-scale=1.0">
-        <title>Phase 1.2 - The Echo Chamber</title>
+        <title>Phase 2.2 - Document Room Sync</title>
     </head>
     <body>
-        <input type="text" id="text_input" placeholder="Type a message....">
+        <h2>Collaborative Text Editor</h2>
+
+        <label for="doc_id_input">Document ID: </label>
+        <input type="number" id="doc_id_input" value="1">
+        <button id="connect_btn">Connect to Room</button>
+
+        <br><br>
+        
+        <textarea id="editor_textarea" cols="60" rows="12"></textarea>
+
         <script>
-            const text_input = document.getElementById("text_input");
-            const websocket_connection = new WebSocket("ws://localhost:8000/ws");
+            const docIdInput = document.getElementById("doc_id_input");
+            const connect_btn = document.getElementById("connect_btn");
+            const editor_textarea = document.getElementById("editor_textarea")
+            let ws = null;
 
-            websocket_connection.onmessage = function(event){
-                const received_data = JSON.parse(event.data);
-                console.log("Server Echoed:",received_data);
-            };
 
-            text_input.addEventListener("input",function(event){
-                const current_input_value = text_input.value;
-                const payload_object = {
-                    text: current_input_value
+            connect_btn.addEventListener("click",() => {
+                const doc_id = docIdInput.value
+                if(!doc_id) return;
+                if(ws) ws.close();
+                
+                ws = new WebSocket(`ws://localhost:8000/ws/${doc_id}`);
+
+                ws.onopen = () => {
+                    console.log(`Connect to Document Room ${doc_id}`)
+                    editor_textarea.disabled = false
                 };
-                if(websocket_connection.readyState==WebSocket.OPEN){
-                    websocket_connection.send(JSON.stringify(payload_object));
-                }
+
+                ws.onmessage = (event) => {
+                    try{
+                        const data = JSON.parse(event.data);
+                        if(data.type === "init"){
+                            editor_textarea.value = data.content;
+                        }
+                    }
+                    catch(e){
+                        // plain text broadcast update from other clients.
+                        editor_textarea.value = event.data;
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log("Disconnected From Room.")
+                    editor_textarea.disabled = true;
+                };
             });
-        </script>
+
+            editor_textarea.addEventListener("input", () => {
+                if (ws && ws.readyState === WebSocket.OPEN){
+                    ws.send(JSON.stringify({
+                        type: "update",
+                        content: editor_textarea.value
+                }))
+                }
+            })            
+
+       </script>
     </body>
 </html>
