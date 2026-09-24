@@ -1,68 +1,106 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="device-width, initial-scale=1.0">
-        <title>Phase 2.2 - Document Room Sync</title>
-    </head>
-    <body>
-        <h2>Collaborative Text Editor</h2>
 
-        <label for="doc_id_input">Document ID: </label>
-        <input type="number" id="doc_id_input" value="1">
-        <button id="connect_btn">Connect to Room</button>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presence And User Awareness</title>
+  <style>
+    .presence-bar {
+      margin: 10px 0;
+      padding: 8px 12px;
+      background-color: #f0f4f8;
+      border-radius: 6px;
+      font-family: sans-serif;
+      font-size: 14px;
+    }
 
-        <br><br>
-        
-        <textarea id="editor_textarea" cols="60" rows="12"></textarea>
+    .user-tag {
+      display: inline-block;
+      background: #007bff;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      margin-left: 5px;
+      font-size: 12px;
+    }
+  </style>
+</head>
 
-        <script>
-            const docIdInput = document.getElementById("doc_id_input");
-            const connect_btn = document.getElementById("connect_btn");
-            const editor_textarea = document.getElementById("editor_textarea")
-            let ws = null;
+<body>
+  <h2>Collaborative Text Editor</h2>
+
+  <label for="doc_id_input">Document ID: </label>
+  <input type="number" id="doc_id_input" value="1">
+  <button id="connect_btn">Connect to Room</button>
+
+  <div class="presence-bar">
+    <strong>Active Users (<span id="user_count">0</span>):</strong>
+    <span id="user_list">Disconnected</span>
+  </div>
+
+  <br><br>
+
+  <textarea id="editor_textarea" cols="60" rows="12"></textarea>
+
+  <script>
+    const docIdInput = document.getElementById("doc_id_input");
+    const connect_btn = document.getElementById("connect_btn");
+    const editor_textarea = document.getElementById("editor_textarea")
+    const user_count_span = document.getElementById("user_count")
+    const user_list_span = document.getElementById("user_list")
+    let ws = null;
 
 
-            connect_btn.addEventListener("click",() => {
-                const doc_id = docIdInput.value
-                if(!doc_id) return;
-                if(ws) ws.close();
-                
-                ws = new WebSocket(`ws://localhost:8000/ws/${doc_id}`);
+    connect_btn.addEventListener("click", () => {
+      const doc_id = docIdInput.value
+      if (!doc_id) return;
+      if (ws) ws.close();
 
-                ws.onopen = () => {
-                    console.log(`Connect to Document Room ${doc_id}`)
-                    editor_textarea.disabled = false
-                };
+      ws = new WebSocket(`ws://localhost:8000/ws/${doc_id}`);
 
-                ws.onmessage = (event) => {
-                    try{
-                        const data = JSON.parse(event.data);
-                        if(data.type === "init"){
-                            editor_textarea.value = data.content;
-                        }
-                    }
-                    catch(e){
-                        // plain text broadcast update from other clients.
-                        editor_textarea.value = event.data;
-                    }
-                };
+      ws.onopen = () => {
+        console.log(`Connect to Document Room ${doc_id}`)
+        editor_textarea.disabled = false
+      };
 
-                ws.onclose = () => {
-                    console.log("Disconnected From Room.")
-                    editor_textarea.disabled = true;
-                };
-            });
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "init" || data.type === "update") {
+            editor_textarea.value = data.content;
+          }
+          else if (data.type === "presence") {
+            user_count_span.textContent = data.count;
+            user_list_span.innerHTML = data.users
+              .map(u => `<span class="user-tag"> ${u.name} </span>`)
+              .join(" ");
+          }
+        }
+        catch (e) {
+          // plain text broadcast update from other clients.
+          editor_textarea.value = event.data;
+        }
+      };
 
-            editor_textarea.addEventListener("input", () => {
-                if (ws && ws.readyState === WebSocket.OPEN){
-                    ws.send(JSON.stringify({
-                        type: "update",
-                        content: editor_textarea.value
-                }))
-                }
-            })            
+      ws.onclose = () => {
+        console.log("Disconnected From Room.")
+        editor_textarea.disabled = true;
+        user_count_span.textContent = 0;
+        user_list_span.textContent = "Disconnected";
+      };
+    });
 
-       </script>
-    </body>
+    editor_textarea.addEventListener("input", () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "update",
+          content: editor_textarea.value
+        }))
+      }
+    })
+
+  </script>
+</body>
+
 </html>
