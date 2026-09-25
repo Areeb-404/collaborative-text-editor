@@ -75,4 +75,3 @@ async def update_document(doc_id: int, content: str) -> Optional[Dict[str,Any]]:
         content,doc_id)
     return dict(row) if row else None
 
-

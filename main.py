@@ -1,4 +1,4 @@
-import asyncio
+import asyncio related to this document since all the users are disconnected
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,8 +51,8 @@ class ConnectionManager:
         if doc_id in self.active_rooms:
             if websocket in self.active_rooms[doc_id]:
                 self.active_rooms[doc_id].pop(websocket, None)
-            # when room becomes empty, flush pending edits and free memory
-            if not self.active_rooms[doc_id]:
+
+            if not self.active_rooms[doc_id]: # when room becomes empty, flush pending edits and free memory
                 del self.active_rooms[doc_id]
 
                 # cancel pending timer and flush immediately
@@ -63,7 +63,7 @@ class ConnectionManager:
                     self.db_save_tasks[doc_id].cancel()
 
                 await self.flush_to_db(doc_id)
-                # cleanup memory
+                # cleanup all memory related to this document since all the users are disconnected
                 self.room_data.pop(doc_id, None)
                 self.is_dirty.pop(doc_id, None)
                 self.db_save_tasks.pop(doc_id, None)
@@ -100,6 +100,10 @@ class ConnectionManager:
         )
 
     async def debounced_db_save(self, doc_id: int, delay: float = 2.0):
+        """This function keeps scheduling a save at every keystroke, but if a new keystroke comes 
+        in before that 2-second timer finishes, the old timer is cancelled and a new one takes its place. 
+        This keeps happening indefinitely until a keystroke is followed by 2 full seconds of silence, 
+        only then does the timer actually complete and trigger"""
         try:
             await asyncio.sleep(delay)
             await self.flush_to_db(doc_id)
@@ -111,8 +115,8 @@ class ConnectionManager:
         """Executes SQL updates if there are uncommitted edits"""
         if self.is_dirty.get(doc_id, False) and doc_id in self.room_data:
             content = self.room_data[doc_id]
+            self.is_dirty[doc_id] = False # the document is already not dirty since it is being immediately committed in the next line
             await database.update_document(doc_id, content)
-            self.is_dirty[doc_id] = False
             print(f"--> [DB Flush] Successfully saved document {doc_id} to the database.")
 
     async def broadcast_presence(self, doc_id: int):
@@ -133,17 +137,6 @@ class ConnectionManager:
                         
 manager = ConnectionManager()
 
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        while True:
-            json_payload = await websocket.receive_json()
-            await websocket.send_json(json_payload)
-    except WebSocketDisconnect:
-        pass
-        
 
 class document_create_request(BaseModel):
     title: str
