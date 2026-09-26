@@ -51,6 +51,60 @@
     const user_list_span = document.getElementById("user_list")
     let ws = null;
 
+    // helper function to update content while preserving cursor position
+    function UpdateContentandPreserveCursor(newContent) {
+      const textarea = document.getElementById("editor_textarea");
+      const oldcontent = textarea.value;
+
+      //1. If there is no new content, do nothing
+      if (oldcontent == newContent) return;
+
+      //2. Check if this tab's textarea is currently focused
+      const isfocused = (document.activeElement === textarea);
+
+      if (isfocused) {
+        let start = textarea.selectionStart;
+        let end = textarea.selectionEnd;
+
+        //3. Find length of common prefix
+        let prefixLen = 0;
+        const minlen = Math.min(oldcontent.length, newContent.length);
+        while (prefixLen < minlen && oldcontent[prefixLen] === newContent[prefixLen]) {
+          prefixLen++;
+        }
+
+
+        //4. Find length of common suffix
+        let suffixLen = 0;
+        while (
+          suffixLen < (minlen - prefixLen) &&
+          oldcontent[oldcontent.length - 1 - suffixLen] === newContent[newContent.length - 1 - suffixLen]
+        ) {
+          suffixLen++;
+        }
+
+        //5. Find out the change offset and total character difference
+        const changeStart = prefixLen;
+        const deletedLen = oldcontent.length - prefixLen - suffixLen;
+        const insertedLen = newContent.length - prefixLen - suffixLen;
+        const delta = insertedLen - deletedLen;
+
+        //6. Adjust cursor position if the edit occured at or before the current cursor position
+        if (changeStart <= start) {
+          start = Math.max(changeStart, start + delta);
+        }
+        if (changeStart <= end) {
+          end = Math.max(changeStart, end + delta);
+        }
+
+        //7. Update text and restore adjusted section
+        textarea.value = newContent;
+        textarea.setSelectionRange(start, end);
+      }
+
+      // if the tab is unfocused, simply update the value without resetting carets
+      textarea.value = newContent;
+    }
 
     connect_btn.addEventListener("click", () => {
       const doc_id = docIdInput.value
@@ -68,7 +122,7 @@
         try {
           const data = JSON.parse(event.data);
           if (data.type === "init" || data.type === "update") {
-            editor_textarea.value = data.content;
+            UpdateContentandPreserveCursor(data.content);
           }
           else if (data.type === "presence") {
             user_count_span.textContent = data.count;
@@ -79,7 +133,7 @@
         }
         catch (e) {
           // plain text broadcast update from other clients.
-          editor_textarea.value = event.data;
+          UpdateContentandPreserveCursor(event.data);
         }
       };
 
