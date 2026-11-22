@@ -41,119 +41,152 @@
 
   <br><br>
 
-  <textarea id="editor_textarea" cols="60" rows="12"></textarea>
+  <textarea id="editor_textarea" cols="60" rows="12" disabled></textarea>
 
   <script>
     const docIdInput = document.getElementById("doc_id_input");
-    const connect_btn = document.getElementById("connect_btn");
-    const editor_textarea = document.getElementById("editor_textarea")
-    const user_count_span = document.getElementById("user_count")
-    const user_list_span = document.getElementById("user_list")
+    const connectBtn = document.getElementById("connect_btn");
+    const editor = document.getElementById("editor_textarea");
+    const userCountSpan = document.getElementById("user_count");
+    const userListSpan = document.getElementById("user_list");
+
     let ws = null;
-
-    // helper function to update content while preserving cursor position
-    function UpdateContentandPreserveCursor(newContent) {
-      const textarea = document.getElementById("editor_textarea");
-      const oldcontent = textarea.value;
-
-      //1. If there is no new content, do nothing
-      if (oldcontent == newContent) return;
-
-      //2. Check if this tab's textarea is currently focused
-      const isfocused = (document.activeElement === textarea);
-
-      if (isfocused) {
-        let start = textarea.selectionStart;
-        let end = textarea.selectionEnd;
-
-        //3. Find length of common prefix
-        let prefixLen = 0;
-        const minlen = Math.min(oldcontent.length, newContent.length);
-        while (prefixLen < minlen && oldcontent[prefixLen] === newContent[prefixLen]) {
-          prefixLen++;
-        }
+    let clientId = null;    // the server tells us who we are
+    let items = [];        // the CRDT: [{key, char, client_id}], always sorted
+    let lastText = "";    // what the textarea showed after our last update
 
 
-        //4. Find length of common suffix
-        let suffixLen = 0;
-        while (
-          suffixLen < (minlen - prefixLen) &&
-          oldcontent[oldcontent.length - 1 - suffixLen] === newContent[newContent.length - 1 - suffixLen]
-        ) {
-          suffixLen++;
-        }
+    function compare(a,b){
+      if(a.key !== b.key) return a.key < b.key ? -1 : 1;
+      if(a.client_id !== b.client_id) return a.client_id < b.client_id ? -1 : 1;
+      return 0;
+    }
+    const sameId = (a,b) => a.key === b.key && a.client_id === b.client_id;
 
-        //5. Find out the change offset and total character difference
-        const changeStart = prefixLen;
-        const deletedLen = oldcontent.length - prefixLen - suffixLen;
-        const insertedLen = newContent.length - prefixLen - suffixLen;
-        const delta = insertedLen - deletedLen;
-
-        //6. Adjust cursor position if the edit occured at or before the current cursor position
-        if (changeStart <= start) {
-          start = Math.max(changeStart, start + delta);
-        }
-        if (changeStart <= end) {
-          end = Math.max(changeStart, end + delta);
-        }
-
-        //7. Update text and restore adjusted section
-        textarea.value = newContent;
-        textarea.setSelectionRange(start, end);
+    function lowerBound(item){     // binary search to figure out where the item belongs
+      let lo = 0, hi = items.length;
+      while(lo<hi){
+        const mid = (lo+hi)>>1;
+        if(compare(items[mid],item)<0) lo = mid+1; else hi = mid;
       }
-
-      // if the tab is unfocused, simply update the value without resetting carets
-      textarea.value = newContent;
+      return lo;
     }
 
-    connect_btn.addEventListener("click", () => {
-      const doc_id = docIdInput.value
-      if (!doc_id) return;
-      if (ws) ws.close();
+    function keyBetween(left,right){   // a number between two neighbours ie for 1 and 2 its 1.5
+      if(left===null && right===null) return 1;
+      if(left===null) return right-1;
+      if(right===null) return left+1;
+      return (left+right)/2;
+    }
 
-      ws = new WebSocket(`ws://localhost:8000/ws/${doc_id}`);
+    const itemsToText = () => items.map(i => i.char).join("");
+    function render() {lastText = itemsToText(); editor.value = lastText;}
+    function send(obj) {if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));}
 
-      ws.onopen = () => {
-        console.log(`Connect to Document Room ${doc_id}`)
-        editor_textarea.disabled = false
-      };
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "init" || data.type === "update") {
-            UpdateContentandPreserveCursor(data.content);
-          }
-          else if (data.type === "presence") {
-            user_count_span.textContent = data.count;
-            user_list_span.innerHTML = data.users
-              .map(u => `<span class="user-tag"> ${u.name} </span>`)
-              .join(" ");
-          }
+    function applyRemote(op){
+      let idx, shift;
+      if(op.type === "insert"){
+        const item = {key: op.key, char: op.char, client_id: op.client_id};
+        idx = lowerBound(item);
+        if(idx<items.length && sameId(items[idx],item)) return;  // already have it 
+        items.splice(idx,0,item);
+        shift = +1;
+      }
+      else{
+        idx = items.findIndex(i => sameId(i,op));
+        if(idx===-1) return;
+        items.splice(idx,1);
+        shift = -1;
+      }
+
+      let start = editor.selectionStart, end = editor.selectionEnd;
+      if(idx<start) start+= shift;
+      if(idx<end) end += shift;
+      
+      render();
+      if(document.activeElement === editor) editor.setSelectionRange(start,end);
+    }
+
+
+    editor.addEventListener("input", () => {
+        const oldText = lastText, newText = editor.value;
+
+        // finding the one changed region, common start + common end
+        const min = Math.min(oldText.length,newText.length);
+        let p = 0;
+        while(p<min && oldText[p] === newText[p]) p++;
+        let s = 0;
+        while(s<min-p && oldText[oldText.length-1-s] === newText[newText.length-1-s]) s++;
+
+        const removedCount = oldText.length-p-s;
+        const inserted = newText.slice(p, newText.length - s);
+
+        // 1. Deletions
+        const gone = items.splice(p, removedCount);
+        for(const it of gone) send({type: "delete", key: it.key, client_id: it.client_id});
+
+        // 2. Insertions 
+        let left = p>0 ? items[p-1].key : null;
+        const right = p < items.length ? items[p].key : null;
+        for(let i=0; i<inserted.length; i++){
+          const item = {key: keyBetween(left,right), char: inserted[i], client_id: clientId};
+          items.splice(lowerBound(item),0,item);
+          left = item.key;
+          send({type: "insert", key: item.key, char: item.char});
         }
-        catch (e) {
-          // plain text broadcast update from other clients.
-          UpdateContentandPreserveCursor(event.data);
-        }
-      };
 
-      ws.onclose = () => {
-        console.log("Disconnected From Room.")
-        editor_textarea.disabled = true;
-        user_count_span.textContent = 0;
-        user_list_span.textContent = "Disconnected";
-      };
+        // safety net
+        if(itemsToText() !== newText){
+          render();
+          editor.setSelectionRange(p+inserted.length, p+inserted.length);
+        }
+        else{
+          lastText = newText;
+        }
     });
 
-    editor_textarea.addEventListener("input", () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: "update",
-          content: editor_textarea.value
-        }))
-      }
-    })
+    connectBtn.addEventListener("click", () => {
+        const docId = docIdInput.value;
+        if(!docId) return;
+        if(ws) ws.close();
 
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const host = location.host || "localhost:8000";
+        const socket = new WebSocket(`${proto}://${host}/ws/${docId}`);
+        ws = socket;
+
+        socket.onmessage = (event) => {
+          if(ws!==socket) return;
+          const data = JSON.parse(event.data);
+
+          if(data.type === "init"){
+            clientId = data.client_id;
+            items = data.crdt_state;
+            render();
+            editor.disabled = false;
+          }
+          else if(data.type === "insert" || data.type === "delete"){
+            applyRemote(data);
+          }
+          else if(data.type === "presence"){
+            userCountSpan.textContent = data.count;
+            userListSpan.textContent = "";
+            for(const u of data.users){
+              const tag = document.createElement("span");
+              tag.className = "user-tag";
+              tag.textContent = u.name;
+              userListSpan.appendChild(tag);
+            }
+          }
+        }
+        socket.onclose = (event) => {
+          if(ws!==socket) return;
+          editor.disabled = true;
+          userListSpan.textContent = "Disconnected";
+          userCountSpan.textContent = 0;
+        }
+    })
   </script>
 </body>
 

@@ -42,7 +42,7 @@ async def create_document(title: str, content: str="") -> Dict[str,Any]:
         row = await conn.fetchrow("""
             INSERT INTO documents (title, content)
             VALUES ($1,$2)
-            RETURNING id, content, created_at;
+            RETURNING id, title, content, created_at;
         """,title,content)
         return dict(row) if row else{}
 

@@ -96,7 +96,8 @@ class ConnectionManager:
             }
             
             # remove duplicates if key already exists
-            items = [item for item in items if item["key"] != key]
+            cid = op.get("client_id","")
+            items = [item for item in items if not (item["key"] == key and item["client_id"] == cid)]
             items.append(new_item)
             # deterministic sorting: sort by key, tie-break by client_id
             items.sort(key = lambda x: (x["key"], x["client_id"]))
@@ -104,7 +105,8 @@ class ConnectionManager:
             self.is_dirty[doc_id] = True
 
         elif op_type == "delete":
-            self.room_data[doc_id] = [item for item in items if item["key"] != key]
+            cid = op.get("client_id","")
+            self.room_data[doc_id] = [item for item in items if not (item["key"] == key and item["client_id"] == cid)]
             self.is_dirty[doc_id] = True
 
     async def handle_op(self, doc_id: int, op: dict, sender: WebSocket):
@@ -169,7 +171,8 @@ async def create_doc_endpoint(payload: document_create_request):
 async def get_doc_endpoint(doc_id: int):
     # return in memory if room is active, else from the DB
     if doc_id in manager.room_data:
-        return {"id": doc_id, "content": manager.room_data[doc_id]}
+        text = "".join(i["char"] for i in manager.room_data[doc_id])
+        return {"id": doc_id, "content": text}
 
     # if inactive then fetch from DB
     document = await database.get_document(doc_id)
@@ -198,7 +201,7 @@ async def websocket_document_endpoint(websocket:WebSocket, doc_id: int):
             return
         raw_text = document["content"]
         current_crdt_state = [
-            {"key" : f"a{i}", "char" : char, "client_id": "system"}
+            {"key" : float(i+1), "char" : char, "client_id": "system"}
             for i, char in enumerate(raw_text)
         ]
 
@@ -215,13 +218,16 @@ async def websocket_document_endpoint(websocket:WebSocket, doc_id: int):
 
     try:
         while True:
+            raw = await websocket.receive_text()
             try:
-                data = await websocket.receive_json()
-            except Exception:
+                data = json.loads(raw)
+            except ValueError:
                 continue
 
             # if the client sends an update message.
             if data.get("type") in ["insert", "delete"]:
+                if data["type"] == "insert":
+                    data["client_id"] = client_id
                 await manager.handle_op(doc_id=doc_id, op=data, sender=websocket)
 
     except WebSocketDisconnect:
