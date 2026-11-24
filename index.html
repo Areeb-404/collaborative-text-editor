@@ -56,137 +56,158 @@
     let lastText = "";    // what the textarea showed after our last update
 
 
-    function compare(a,b){
-      if(a.key !== b.key) return a.key < b.key ? -1 : 1;
-      if(a.client_id !== b.client_id) return a.client_id < b.client_id ? -1 : 1;
+    let ReconnectAttempts = 0;
+    const maxReconnectDelay = 10000; // capping the reconnect delay at 10 second ie 10000 ms
+    let reconnectTimeout = null;
+
+    function compare(a, b) {
+      if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+      if (a.client_id !== b.client_id) return a.client_id < b.client_id ? -1 : 1;
       return 0;
     }
-    const sameId = (a,b) => a.key === b.key && a.client_id === b.client_id;
+    const sameId = (a, b) => a.key === b.key && a.client_id === b.client_id;
 
-    function lowerBound(item){     // binary search to figure out where the item belongs
+    function lowerBound(item) {     // binary search to figure out where the item belongs
       let lo = 0, hi = items.length;
-      while(lo<hi){
-        const mid = (lo+hi)>>1;
-        if(compare(items[mid],item)<0) lo = mid+1; else hi = mid;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (compare(items[mid], item) < 0) lo = mid + 1; else hi = mid;
       }
       return lo;
     }
 
-    function keyBetween(left,right){   // a number between two neighbours ie for 1 and 2 its 1.5
-      if(left===null && right===null) return 1;
-      if(left===null) return right-1;
-      if(right===null) return left+1;
-      return (left+right)/2;
+    function keyBetween(left, right) {   // a number between two neighbours ie for 1 and 2 its 1.5
+      if (left === null && right === null) return 1;
+      if (left === null) return right - 1;
+      if (right === null) return left + 1;
+      return (left + right) / 2;
     }
 
     const itemsToText = () => items.map(i => i.char).join("");
     function render() {lastText = itemsToText(); editor.value = lastText;}
-    function send(obj) {if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));}
+    function send(obj) {if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));}
 
 
-    function applyRemote(op){
+    function applyRemote(op) {
       let idx, shift;
-      if(op.type === "insert"){
+      if (op.type === "insert") {
         const item = {key: op.key, char: op.char, client_id: op.client_id};
         idx = lowerBound(item);
-        if(idx<items.length && sameId(items[idx],item)) return;  // already have it 
-        items.splice(idx,0,item);
+        if (idx < items.length && sameId(items[idx], item)) return;  // already have it 
+        items.splice(idx, 0, item);
         shift = +1;
       }
-      else{
-        idx = items.findIndex(i => sameId(i,op));
-        if(idx===-1) return;
-        items.splice(idx,1);
+      else {
+        idx = items.findIndex(i => sameId(i, op));
+        if (idx === -1) return;
+        items.splice(idx, 1);
         shift = -1;
       }
 
       let start = editor.selectionStart, end = editor.selectionEnd;
-      if(idx<start) start+= shift;
-      if(idx<end) end += shift;
-      
+      if (idx < start) start += shift;
+      if (idx < end) end += shift;
+
       render();
-      if(document.activeElement === editor) editor.setSelectionRange(start,end);
+      if (document.activeElement === editor) editor.setSelectionRange(start, end);
     }
 
 
     editor.addEventListener("input", () => {
-        const oldText = lastText, newText = editor.value;
+      const oldText = lastText, newText = editor.value;
 
-        // finding the one changed region, common start + common end
-        const min = Math.min(oldText.length,newText.length);
-        let p = 0;
-        while(p<min && oldText[p] === newText[p]) p++;
-        let s = 0;
-        while(s<min-p && oldText[oldText.length-1-s] === newText[newText.length-1-s]) s++;
+      // finding the one changed region, common start + common end
+      const min = Math.min(oldText.length, newText.length);
+      let p = 0;
+      while (p < min && oldText[p] === newText[p]) p++;
+      let s = 0;
+      while (s < min - p && oldText[oldText.length - 1 - s] === newText[newText.length - 1 - s]) s++;
 
-        const removedCount = oldText.length-p-s;
-        const inserted = newText.slice(p, newText.length - s);
+      const removedCount = oldText.length - p - s;
+      const inserted = newText.slice(p, newText.length - s);
 
-        // 1. Deletions
-        const gone = items.splice(p, removedCount);
-        for(const it of gone) send({type: "delete", key: it.key, client_id: it.client_id});
+      // 1. Deletions
+      const gone = items.splice(p, removedCount);
+      for (const it of gone) send({type: "delete", key: it.key, client_id: it.client_id});
 
-        // 2. Insertions 
-        let left = p>0 ? items[p-1].key : null;
-        const right = p < items.length ? items[p].key : null;
-        for(let i=0; i<inserted.length; i++){
-          const item = {key: keyBetween(left,right), char: inserted[i], client_id: clientId};
-          items.splice(lowerBound(item),0,item);
-          left = item.key;
-          send({type: "insert", key: item.key, char: item.char});
-        }
+      // 2. Insertions 
+      let left = p > 0 ? items[p - 1].key : null;
+      const right = p < items.length ? items[p].key : null;
+      for (let i = 0; i < inserted.length; i++) {
+        const item = {key: keyBetween(left, right), char: inserted[i], client_id: clientId};
+        items.splice(lowerBound(item), 0, item);
+        left = item.key;
+        send({type: "insert", key: item.key, char: item.char, client_id: clientId});
+      }
 
-        // safety net
-        if(itemsToText() !== newText){
-          render();
-          editor.setSelectionRange(p+inserted.length, p+inserted.length);
-        }
-        else{
-          lastText = newText;
-        }
+      // safety net
+      if (itemsToText() !== newText) {
+        render();
+        editor.setSelectionRange(p + inserted.length, p + inserted.length);
+      }
+      else {
+        lastText = newText;
+      }
     });
 
+    function connect() {
+      const docId = docIdInput.value;
+      if (!docId) return;
+      // clean up any existing connection or pending reconnect timers
+      if (ws) ws.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const host = "localhost:8000";
+      const socket = new WebSocket(`${proto}://${host}/ws/${docId}`);
+      ws = socket;
+
+      socket.onmessage = (event) => {
+        if (ws !== socket) return;
+        const data = JSON.parse(event.data);
+
+        if (data.type === "init") {
+          // reset connect attempt count on a successfull init
+          ReconnectAttempts = 0;
+          clientId = data.client_id;
+          items = data.crdt_state;
+          render();
+          editor.disabled = false;
+        }
+        else if (data.type === "insert" || data.type === "delete") {
+          applyRemote(data);
+        }
+        else if (data.type === "presence") {
+          userCountSpan.textContent = data.count;
+          userListSpan.textContent = "";
+          for (const u of data.users) {
+            const tag = document.createElement("span");
+            tag.className = "user-tag";
+            tag.textContent = u.name;
+            userListSpan.appendChild(tag);
+          }
+        }
+      }
+      socket.onclose = () => {
+        if (ws !== socket) return;
+        editor.disabled = true;
+        userListSpan.textContent = "Disconnected";
+        userCountSpan.textContent = 0;
+        const delay = Math.min(1000 * Math.pow(2, ReconnectAttempts), maxReconnectDelay);
+        console.log(`Connection dropped. Reconnecting in ${delay / 1000}s.... (Attempt ${ReconnectAttempts + 1})`)
+        ReconnectAttempts++;
+
+        // schedule the next reconnect attempt 
+        reconnectTimeout = setTimeout(() => {
+          connect();
+        }, delay);
+      };
+    }
+
     connectBtn.addEventListener("click", () => {
-        const docId = docIdInput.value;
-        if(!docId) return;
-        if(ws) ws.close();
-
-        const proto = location.protocol === "https:" ? "wss" : "ws";
-        const host = location.host || "localhost:8000";
-        const socket = new WebSocket(`${proto}://${host}/ws/${docId}`);
-        ws = socket;
-
-        socket.onmessage = (event) => {
-          if(ws!==socket) return;
-          const data = JSON.parse(event.data);
-
-          if(data.type === "init"){
-            clientId = data.client_id;
-            items = data.crdt_state;
-            render();
-            editor.disabled = false;
-          }
-          else if(data.type === "insert" || data.type === "delete"){
-            applyRemote(data);
-          }
-          else if(data.type === "presence"){
-            userCountSpan.textContent = data.count;
-            userListSpan.textContent = "";
-            for(const u of data.users){
-              const tag = document.createElement("span");
-              tag.className = "user-tag";
-              tag.textContent = u.name;
-              userListSpan.appendChild(tag);
-            }
-          }
-        }
-        socket.onclose = (event) => {
-          if(ws!==socket) return;
-          editor.disabled = true;
-          userListSpan.textContent = "Disconnected";
-          userCountSpan.textContent = 0;
-        }
-    })
+      ReconnectAttempts = 0; // clicking the button resets the automatic attempts
+      connect();
+    });
   </script>
 </body>
 
