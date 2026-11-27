@@ -4,7 +4,7 @@ from os.path import join
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from starlette.types import Lifespan
+from starlette.types import Lifespan, Message
 from typing import Awaitable, Dict, List, Set
 import database
 import json
@@ -183,13 +183,21 @@ async def get_doc_endpoint(doc_id: int):
         )
     return document
 
+
+COLORS = ["#FF5733", "#3366FF", "#2ECC71", "#9B59B6",
+          "#F39C12", "#1ABC9C", "#E91E63", "#795548"]
+def pick_color(doc_id : int):
+    used = {u.get("color") for u in manager.active_rooms.get(doc_id,{}).values()}
+    free = [c for c in COLORS if c not in used]
+    return free[0] if free else COLORS[len(used) % len(COLORS)]
+
 @app.websocket("/ws/{doc_id}")
 async def websocket_document_endpoint(websocket:WebSocket, doc_id: int):
     await websocket.accept()
     # create a unique user indentity as soon as a connection is established.
     user_tag = uuid.uuid4().hex[:4]
     client_id = f"usr_{user_tag}"
-    user_info = {"id" : f"usr_{user_tag}", "name" : f"User-{user_tag}"}
+    user_info = {"client_id" : client_id, "name" : f"User-{user_tag}", "color" : pick_color(doc_id)}
 
     # Load content from memory if room is active, otherwise fetch from DB
     if doc_id in manager.room_data:
@@ -224,11 +232,26 @@ async def websocket_document_endpoint(websocket:WebSocket, doc_id: int):
             except ValueError:
                 continue
 
+            op_type = data.get("type")
+
             # if the client sends an update message.
             if data.get("type") in ["insert", "delete"]:
                 if data["type"] == "insert":
                     data["client_id"] = client_id
                 await manager.handle_op(doc_id=doc_id, op=data, sender=websocket)
+
+            # handling cursor movement Broadcasts
+            elif op_type == "cursor":
+                cursor_payload = {
+                    "type" : "cursor",
+                    "client_id" : client_id,
+                    "position" : data.get("position")
+                }
+                await manager.broadcast_op(
+                    op_payload=cursor_payload,
+                    doc_id=doc_id,
+                    sender=websocket
+                )
 
     except WebSocketDisconnect:
         await manager.disconnect(doc_id,websocket)

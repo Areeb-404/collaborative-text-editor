@@ -54,6 +54,8 @@
     let clientId = null;    // the server tells us who we are
     let items = [];        // the CRDT: [{key, char, client_id}], always sorted
     let lastText = "";    // what the textarea showed after our last update
+    let currentUsers = [];
+    let remoteCursors = {}; // stores the current caret position for each user
 
 
     let ReconnectAttempts = 0;
@@ -108,8 +110,41 @@
       if (idx < start) start += shift;
       if (idx < end) end += shift;
 
+      for (const id in remoteCursors) {
+        if (idx < remoteCursors[id]) remoteCursors[id] += shift;
+      }
       render();
-      if (document.activeElement === editor) editor.setSelectionRange(start, end);
+      if (document.activeElement === editor) {
+        editor.setSelectionRange(start, end);
+        sendCursorPosition();
+      }
+      renderPresence();
+    }
+
+    function renderPresence() {
+      userCountSpan.textContent = currentUsers.length;
+      userListSpan.textContent = "";
+
+      for (const u of currentUsers) {
+        const tag = document.createElement("span");
+        tag.className = "user-tag";
+
+        let label = u.name;
+        if (u.client_id === clientId) {
+          label += " (you)";
+        }
+        else {
+          const pos = remoteCursors[u.client_id];
+          if (pos !== undefined) label += ` (at ${pos})`;
+        }
+        tag.textContent = label;
+
+        if (u.color) {
+          tag.style.backgroundColor = u.color;
+        }
+        userListSpan.appendChild(tag);
+      }
+
     }
 
 
@@ -173,24 +208,25 @@
           items = data.crdt_state;
           render();
           editor.disabled = false;
+          lastSentPos = null;
+          sendCursorPosition();
         }
         else if (data.type === "insert" || data.type === "delete") {
           applyRemote(data);
         }
         else if (data.type === "presence") {
-          userCountSpan.textContent = data.count;
-          userListSpan.textContent = "";
-          for (const u of data.users) {
-            const tag = document.createElement("span");
-            tag.className = "user-tag";
-            tag.textContent = u.name;
-            userListSpan.appendChild(tag);
-          }
+          currentUsers = data.users;
+          renderPresence();
+        }
+        else if (data.type === "cursor") {
+          remoteCursors[data.client_id] = data.position;
+          renderPresence();
         }
       }
       socket.onclose = () => {
         if (ws !== socket) return;
         editor.disabled = true;
+        lastSentPos = null;
         userListSpan.textContent = "Disconnected";
         userCountSpan.textContent = 0;
         const delay = Math.min(1000 * Math.pow(2, ReconnectAttempts), maxReconnectDelay);
@@ -208,6 +244,28 @@
       ReconnectAttempts = 0; // clicking the button resets the automatic attempts
       connect();
     });
+
+    let lastSentPos = null;
+
+    function sendCursorPosition() {
+      if (!ws || ws.readyState != WebSocket.OPEN) return;
+
+      const pos = editor.selectionStart
+      if (pos === lastSentPos) return;
+      lastSentPos = pos
+
+      send({
+        type: "cursor",
+        position: pos
+      });
+    }
+
+    ["keyup", "click", "select", "mouseup", "focus", "input"].forEach(eventType => {
+      editor.addEventListener(eventType, sendCursorPosition);
+    });
+
+    editor.addEventListener("keydown", () => setTimeout(sendCursorPosition, 0));
+
   </script>
 </body>
 
